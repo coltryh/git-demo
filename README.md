@@ -87,3 +87,66 @@ $env:OPENAI_API_KEY="any-key"
 # 运行
 claudecode
 
+// proxy.js
+const http = require('http');
+
+// ⚠️ 你的 Worker 地址 (请确保没有多余空格)
+const WORKER_URL = 'https://rapid-brook-ff7d.827238634.workers.dev'; 
+
+const server = http.createServer(async (req, res) => {
+  // 1. 接收 claudecode 发给本地的正常 JSON
+  const buffers = [];
+  for await (const chunk of req) {
+    buffers.push(chunk);
+  }
+  const rawBody = Buffer.concat(buffers).toString();
+
+  try {
+    console.log(`[本地] 收到请求，正在混淆并发送...`);
+
+    // 2. 核心魔法：把 JSON 转成 Base64
+    // 使用 Buffer 转换支持中文且更稳定
+    const encodedBody = Buffer.from(rawBody).toString('base64');
+
+    // 3. 发送给 Cloudflare Worker
+    // 注意：Content-Type 设为 text/plain 伪装成普通文本
+    const workerResp = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'text/plain' 
+        },
+        body: encodedBody
+    });
+
+    if (!workerResp.ok) {
+        throw new Error(`Worker 报错: ${workerResp.status}`);
+    }
+
+    // 4. 接收 Worker 返回的混淆响应
+    const workerText = await workerResp.text();
+    
+    // 5. 解码还原 (Base64 -> JSON)
+    const decodedBody = Buffer.from(workerText, 'base64').toString('utf-8');
+
+    console.log(`[本地] 收到响应，还原成功，转发给工具`);
+
+    // 6. 像没事人一样还给 claudecode
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(decodedBody);
+
+  } catch (error) {
+    console.error('[错误]', error.message);
+    res.writeHead(500);
+    res.end(JSON.stringify({ error: error.message }));
+  }
+});
+
+// 监听本地 3000 端口
+server.listen(3000, () => {
+  console.log('-------------------------------------------');
+  console.log('🚀 本地隐形隧道已启动: http://127.0.0.1:3000');
+  console.log('🛡️  所有流量将自动加密为 Base64 穿透防火墙');
+  console.log('-------------------------------------------');
+});
+
+
