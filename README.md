@@ -1,74 +1,19 @@
-export const config = {
-  runtime: 'edge',
-};
-
-export default async function handler(request) {
-  if (request.method === 'OPTIONS') {
-    return new Response(null, {
-      status: 200,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': '*'
-      }
-    });
-  }
-
-  try {
-    // 1. 你的智谱 Key
-    const API_KEY = "1efd5a531e264686a78cb9af688a4916.zJegTzxa61V0EsIe";
-
-    // 2. 获取 Claude 发来的原始请求
-    const body = await request.json();
-
-    // 3. 🚨 关键修改：转发给智谱的 Anthropic 兼容接口
-    // 注意：这里必须用 api/anthropic/v1/messages
-    const zhipuResponse = await fetch('https://open.bigmodel.cn/api/anthropic/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': API_KEY,      // Anthropic 标准是用 x-api-key
-        'anthropic-version': '2023-06-01' // 必须假装是这个版本
-      },
-      body: JSON.stringify(body)
-    });
-
-    // 4. 处理流式响应 (哪怕不流式，原样返回也更稳)
-    const data = await zhipuResponse.text();
-    
-    return new Response(data, {
-      headers: { 
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*'
-      }
-    });
-
-  } catch (e) {
-    return new Response(JSON.stringify({ error: e.message }), { 
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
-  }
-}
-
-
-
-
-
 const http = require('http');
 
+// 1. 忽略证书错误 (公司内网防拦截)
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-// 你的 Vercel 地址
+// 2. 你的 Vercel 地址
 const VERCEL_URL = 'https://api.ryhcolt.online/api'; 
-// 强制替换的模型
+// 3. 强制替换的模型
 const FORCE_MODEL = 'glm-4.7'; 
 
 const server = http.createServer(async (req, res) => {
-    // CORS 头
+    // 设置 CORS 头
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', '*');
 
+    // 处理预检
     if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
 
     if (req.method === 'POST') {
@@ -78,38 +23,68 @@ const server = http.createServer(async (req, res) => {
             try {
                 const originalRequest = JSON.parse(body);
                 
-                // 强制关闭 stream (为了兼容性，先让它一次性返回，解决“不说话”的问题)
-                // 智谱的 Anthropic 接口对流式支持比较复杂，先用非流式跑通
-                originalRequest.stream = false; 
+                // 🔥 关键修改 1：开启流式传输 (Stream)
+                // 只要你是 Vercel Edge Runtime，流式传输就不会超时
+                originalRequest.stream = true; 
                 originalRequest.model = FORCE_MODEL;
 
-                console.log(`🔌 请求: ${FORCE_MODEL} | 模式: 极速响应`);
+                console.log(`🔌 收到请求 -> 🚀 转发流式请求 (${FORCE_MODEL})`);
 
                 const vercelResp = await fetch(VERCEL_URL, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'curl/7.68.0' 
+                    },
                     body: JSON.stringify(originalRequest)
                 });
 
-                const data = await vercelResp.text();
-                
-                // 打印一下智谱到底返回了什么，方便调试
-                console.log("📦 智谱返回数据长度:", data.length);
-                if (data.length < 500) console.log("🔍 内容预览:", data);
+                // 处理 Vercel 报错
+                if (!vercelResp.ok) {
+                    const errText = await vercelResp.text();
+                    console.error(`❌ Vercel 报错: ${vercelResp.status}`, errText);
+                    res.writeHead(vercelResp.status, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: errText }));
+                    return;
+                }
 
-                res.writeHead(vercelResp.status, { 'Content-Type': 'application/json' });
-                res.end(data);
+                // 🔥 关键修改 2：管道式转发 (Pipe)
+                // 不等全部结果，收到一点就转发一点，保持连接活跃
+                res.writeHead(200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive'
+                });
+
+                const reader = vercelResp.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    // 将收到的二进制流直接转发给 Claude Code
+                    res.write(value);
+                }
+                res.end();
+                console.log("✅ 流式传输完成");
 
             } catch (error) {
-                console.error('❌ 错误:', error.message);
-                res.writeHead(500);
-                res.end(JSON.stringify({ error: error.message }));
+                console.error('❌ 代理报错:', error.message);
+                // 如果头还没发，发个 500；如果发了，就直接断开
+                if (!res.headersSent) {
+                    res.writeHead(500);
+                    res.end(JSON.stringify({ error: error.message }));
+                } else {
+                    res.end();
+                }
             }
         });
     }
 });
 
 server.listen(3000, () => {
-    console.log('🚀 增强版代理已启动 (适配 Anthropic 协议)');
+    console.log('-------------------------------------------');
+    console.log('🚀 防超时流式基站已启动！(端口: 3000)');
+    console.log('📡 模式: Stream = True');
+    console.log('-------------------------------------------');
 });
-
