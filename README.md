@@ -1,82 +1,52 @@
-const http = require('http');
+// 文件: api/index.js (这是给 Vercel 用的)
+export const config = {
+  runtime: 'edge', // 🔥 关键：开启 Edge 模式，解除 10 秒超时限制
+};
 
-// 1. 忽略证书错误 (公司内网防拦截)
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+export default async function handler(request) {
+  // 处理 CORS 预检
+  if (request.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': '*'
+      }
+    });
+  }
 
-// 2. 你的 Vercel 地址 (确保这个地址是你部署好的)
-const VERCEL_URL = 'https://api.ryhcolt.online/api'; 
-// 3. 强制替换的模型
-const FORCE_MODEL = 'glm-4.7'; 
+  try {
+    // 你的智谱 Key
+    const API_KEY = "1efd5a531e264686a78cb9af688a4916.zJegTzxa61V0EsIe";
 
-const server = http.createServer(async (req, res) => {
-    // 设置 CORS 头
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', '*');
+    const body = await request.json();
+    
+    // 强制开启流式，让它一个字一个字蹦，防止超时
+    body.stream = true;
 
-    // 处理预检
-    if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
+    // 转发给智谱
+    const zhipuResponse = await fetch('https://open.bigmodel.cn/api/anthropic/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify(body)
+    });
 
-    if (req.method === 'POST') {
-        let body = '';
-        req.on('data', chunk => body += chunk);
-        req.on('end', async () => {
-            try {
-                const originalRequest = JSON.parse(body);
-                
-                // 🔥 关键配置：开启流式 + 强制模型
-                originalRequest.stream = true; 
-                originalRequest.model = FORCE_MODEL;
+    // 🔥 关键：直接把水管接通 (透传)
+    return new Response(zhipuResponse.body, {
+      status: zhipuResponse.status,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Access-Control-Allow-Origin': '*',
+        'Connection': 'keep-alive'
+      }
+    });
 
-                console.log(`🔌 收到请求 -> 🚀 转发流式请求 (${FORCE_MODEL})`);
-
-                const vercelResp = await fetch(VERCEL_URL, {
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'User-Agent': 'curl/7.68.0' 
-                    },
-                    body: JSON.stringify(originalRequest)
-                });
-
-                // 处理 Vercel 报错
-                if (!vercelResp.ok) {
-                    const errText = await vercelResp.text();
-                    console.error(`❌ Vercel 报错: ${vercelResp.status}`, errText);
-                    res.writeHead(vercelResp.status, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: errText }));
-                    return;
-                }
-
-                // 🔥 管道式转发 (Pipe)
-                res.writeHead(200, {
-                    'Content-Type': 'text/event-stream',
-                    'Cache-Control': 'no-cache',
-                    'Connection': 'keep-alive'
-                });
-
-                const reader = vercelResp.body.getReader();
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    res.write(value);
-                }
-                res.end();
-                console.log("✅ 流式传输完成");
-
-            } catch (error) {
-                console.error('❌ 代理报错:', error.message);
-                if (!res.headersSent) {
-                    res.writeHead(500);
-                    res.end(JSON.stringify({ error: error.message }));
-                }
-            }
-        });
-    }
-});
-
-server.listen(3000, () => {
-    console.log('-------------------------------------------');
-    console.log('🚀 本地流式基站已启动！(端口: 3000)');
-    console.log('📡 随时准备连接...');
-    console.log('-------------------------------------------');
-});
+  } catch (e) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+  }
+}
