@@ -32,3 +32,6 @@ https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-ms
 
 # 2. 重新执行安装命令
 irm https://astral.sh/uv/install.ps1 | iex
+
+
+https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip
