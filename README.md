@@ -23,3 +23,9 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 |
 }
 
 (Get-Command uvx).source
+
+# 1. 强制忽略所有的 SSL 证书报错
+[Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
+
+# 2. 重新执行安装命令
+irm https://astral.sh/uv/install.ps1 | iex
