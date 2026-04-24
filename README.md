@@ -20,3 +20,15 @@ WHERE create_time = (
 )
 -- 双重保险，防止 update 错数据
 AND submit_flow = -1; 
+
+
+UPDATE DDM_PURCHASE_LIST
+SET update_time = CURRENT_TIMESTAMP 
+WHERE (
+    (Year = 2025 AND Month >= 10) 
+    OR Year > 2025
+  )
+  AND submit_flow = 0
+  AND (update_time < CURRENT_DATE() OR update_time IS NULL)
+ORDER BY create_time DESC 
+LIMIT 1;
