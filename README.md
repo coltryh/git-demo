@@ -1,37 +1,19 @@
-claude mcp add -s user MiniMax --env MINIMAX_API_KEY=api_key --env MINIMAX_API_HOST=https://api.minimaxi.com -- uvx minimax-coding-plan-mcp -y
-
-sk-cp-ci7wMCIWzMmkymTp0VdexCloEVWjevQZ-OqJzHzpcMPfYMPbRWHUzP50_QbSREsD7UTszpw4O1fEMU8T2-qaORrvGdnr7f-La3dJ7Qd7uw85sxgk349JAl0
-
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 |
-
-
-https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip
-
-
- iex"
-
-
-
-{
-  "mcpServers": {
-    "MiniMax": {
-      "command": "uvx",
-      "args": ["minimax-coding-plan-mcp", "-y"],
-      "env": {
-        "MINIMAX_API_KEY": "MINIMAX_API_KEY",
-        "MINIMAX_API_HOST": "https://api.minimaxi.com"
-      }
-    }
-  }
-}
-
-(Get-Command uvx).source
-
-# 1. 强制忽略所有的 SSL 证书报错
-[Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
-
-# 2. 重新执行安装命令
-irm https://astral.sh/uv/install.ps1 | iex
-
-
-https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip
+UPDATE DDM_PURCHASE_LIST
+SET update_time = GETDATE()  -- SQL Server 获取当前时间的函数
+WHERE create_time = (
+    -- 第三层：在所有机构的最新取消记录中，取出全局“最年轻”的一个时间
+    SELECT TOP 1 target_time 
+    FROM (
+        -- 第二层：按机构分组，找出每个机构最近一个月内的最新取消时间
+        SELECT MAX(create_time) AS target_time
+        FROM DDM_PURCHASE_LIST
+        -- 条件1：最近一个月内 (SQL Server 的时间倒推写法)
+        WHERE create_time >= DATEADD(month, -1, GETDATE())
+          -- 条件2：状态为取消
+          AND submit_flow = -1 
+        GROUP BY pharm_eyes_code
+    ) AS tmp
+    ORDER BY target_time DESC
+)
+-- 加上这个条件，防止刚好有两条记录 create_time 一模一样，误改了非取消的单子
+AND submit_flow = -1;
